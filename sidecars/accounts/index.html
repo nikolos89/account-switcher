@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Account Switcher</title><link rel="stylesheet" href="/styles.css"><script src="/app.js" defer></script></head>
+<body><main>
+  <header><div><h1>Account Switcher</h1><p class="muted">Your saved accounts, one panel</p></div><button id="refresh" class="icon" aria-label="Refresh accounts" title="Refresh">↻</button></header>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <section class="current" aria-label="Active account"><span class="current-dot" aria-hidden="true"></span><div><span class="small muted">Currently signed in</span><strong id="currentEmail">Checking sign-in…</strong></div></section>
+  <section aria-labelledby="savedTitle"><div class="section-title"><h2 id="savedTitle">Saved profiles</h2><span id="count" class="muted small"></span></div>
+    <div id="empty" class="empty" hidden><p>Save your current sign-in to return to it from this panel.</p></div>
+    <div id="cards" class="cards" tabindex="0" aria-label="Account profiles. Use arrow keys or swipe."></div>
+    <nav id="pagination" aria-label="Choose a profile" hidden><button id="prev" class="icon" aria-label="Previous profile">‹</button><span id="position" class="small muted"></span><button id="next" class="icon" aria-label="Next profile">›</button></nav>
+  </section>
+  <section class="actions"><label for="label">Profile label <span class="muted small">optional</span></label><input id="label" maxlength="80" placeholder="For example, Personal or Work" autocomplete="off"><button id="save" class="secondary">Save current account</button><p class="small muted">Sign-in data is encrypted for your Windows user. Email and labels are stored as local metadata.</p></section>
+  <details id="addHelp"><summary>Add another account</summary><ol><li>Save the current account using the button above.</li><li>Open <strong>Settings → your account → Sign out</strong>, then sign in to another account through Google.</li><li>Return to this panel and click <strong>Save current account</strong>.</li></ol><p>Do this once per account. After that, select a saved profile in this panel.</p></details>
+  <footer class="small muted">Switching restarts the main Antigravity App. Add Profile Sidebar for a shortcut from your profile menu.</footer>
+<p class="small muted">Companion: <a href="https://github.com/nikolos89/profile-sidebar" target="_blank" rel="noopener noreferrer">Profile Sidebar</a> shows your account and plan below Settings.</p>
+</main>
+<dialog id="confirm"><form method="dialog"><h2>Switch account?</h2><strong id="targetEmail"></strong><p>Antigravity will close and reopen with the selected account. Save your work first.</p><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button id="confirmSwitch" value="switch" class="primary">Switch</button></div></form></dialog>
+</body></html>

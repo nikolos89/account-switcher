@@ -1,0 +1,28 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "account-switcher",
+  "displayName": "Account Switcher",
+  "version": "1.1.0-beta.1",
+  "description": "Save encrypted Windows account profiles, browse cards and switch with a short app restart. Pair with Profile Sidebar for a profile-menu shortcut.",
+  "author": {
+    "name": "Nikolos89",
+    "url": "https://github.com/nikolos89"
+  },
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "homepage": "https://github.com/nikolos89/account-switcher#readme",
+  "repository": "https://github.com/nikolos89/account-switcher",
+  "keywords": [
+    "accounts",
+    "profiles",
+    "switch",
+    "windows",
+    "antigravity",
+    "profile-sidebar"
+  ],
+  "suggestedPrompts": [
+    "Explain how to save my current account in the Account Switcher panel.",
+    "Walk me through adding a second account using normal Google sign-in.",
+    "Explain how Account Switcher and Profile Sidebar work together."
+  ]
+}
