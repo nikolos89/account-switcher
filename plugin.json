@@ -2,8 +2,8 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "account-switcher",
   "displayName": "Account Switcher",
-  "version": "1.1.0-beta.1",
-  "description": "Save encrypted Windows account profiles, browse cards and switch with a short app restart. Pair with Profile Sidebar for a profile-menu shortcut.",
+  "version": "1.1.0-beta.2",
+  "description": "Save encrypted Windows account profiles and switch from a list with an automatic, confirmed app restart. Pair with Profile Sidebar for account-menu shortcuts.",
   "author": {
     "name": "Nikolos89",
     "url": "https://github.com/nikolos89"

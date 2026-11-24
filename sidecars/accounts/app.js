@@ -1,11 +1,8 @@
 const $ = id => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');
-let snapshot;
-let selectedId;
 let pendingId;
 let locked = false;
 let pollTimer;
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
 window.addEventListener('message',event => {
   if (event.source !== window.parent || event.data?.type !== 'theme-change') return;
@@ -38,98 +35,52 @@ function node(tag,className,text) {
   if (text !== undefined) el.textContent = text;
   return el;
 }
+
 function render(data) {
-  snapshot = data;
   $('currentEmail').textContent = data.current?.email || 'Sign-in unavailable';
   $('count').textContent = data.profiles.length ? String(data.profiles.length) : '';
   $('empty').hidden = data.profiles.length > 0;
-  $('cards').hidden = data.profiles.length === 0;
-  $('pagination').hidden = data.profiles.length < 2;
-  $('cards').replaceChildren();
+  $('profiles').hidden = data.profiles.length === 0;
+  $('profiles').replaceChildren();
+
   for (const profile of data.profiles) {
-    const card = node('article','card'+(profile.active ? ' active' : ''));
-    card.dataset.id = profile.id;
-    const top = node('div','card-top');
-    top.append(node('div','avatar',(profile.label || profile.name || profile.email).slice(0,1).toUpperCase()));
-    if (profile.active) top.append(node('span','badge','Active'));
-    card.append(top,node('h3','',profile.label || profile.name || profile.email.split('@')[0]),node('p','email',profile.email));
-    const button = node('button','primary switch-button',profile.active ? 'In use' : 'Switch account');
-    button.dataset.active = String(profile.active);
-    button.disabled = profile.active || !!data.busy;
-    button.addEventListener('click',() => {
-      if (locked) return;
-      pendingId = profile.id;
-      $('targetEmail').textContent = profile.email;
-      $('confirm').showModal();
-    });
-    card.append(button);
-    $('cards').append(card);
+    const title = profile.label || profile.name || profile.email.split('@')[0];
+    const row = node('li','profile-row' + (profile.active ? ' active' : ''));
+    const avatar = node('span','avatar',Array.from(title)[0]?.toLocaleUpperCase('ru') || '?');
+    avatar.setAttribute('aria-hidden','true');
+    const identity = node('div','identity');
+    identity.append(node('h3','',title),node('p','email',profile.email));
+    if (profile.name && profile.name !== title && profile.name !== profile.email) {
+      identity.append(node('p','email',profile.name));
+    }
+    row.append(avatar, identity);
+
+    if (profile.active) {
+      row.append(node('span','badge','Active'));
+    } else {
+      const button = node('button','secondary switch-button','Switch account');
+      button.type = 'button';
+      button.setAttribute('aria-label','Switch to ' + profile.email);
+      button.addEventListener('click',() => {
+        if (locked) return;
+        pendingId = profile.id;
+        $('targetEmail').textContent = profile.email;
+        $('confirm').returnValue = '';
+        $('confirm').showModal();
+      });
+      row.append(button);
+    }
+    $('profiles').append(row);
   }
-  const index = Math.max(0,data.profiles.findIndex(p => p.id === selectedId));
-  selectIndex(index,false);
+
   setLocked(!!data.busy);
-  if (data.currentError) notice(data.currentError,true);
-  else if (data.status) notice(data.status.message,data.status.state === 'failed');
+  if (data.status?.state === 'failed') notice(data.status.message,true);
+  else if (data.currentError) notice(data.currentError,true);
+  else if (data.status) notice(data.status.message);
   else notice('');
   if (data.busy) startPolling();
 }
-function selectIndex(index,smooth = true) {
-  if (!snapshot?.profiles.length) return;
-  index = Math.max(0,Math.min(snapshot.profiles.length - 1,index));
-  selectedId = snapshot.profiles[index].id;
-  const card = $('cards').children[index];
-  $('cards').scrollTo({left:card.offsetLeft - $('cards').firstElementChild.offsetLeft,behavior:smooth && !reducedMotion.matches ? 'smooth' : 'instant'});
-  updatePosition(index);
-}
-function updatePosition(index) {
-  $('position').textContent = (index + 1)+' of '+snapshot.profiles.length;
-  $('prev').disabled = index === 0;
-  $('next').disabled = index === snapshot.profiles.length - 1;
-  selectedId = snapshot.profiles[index]?.id;
-}
-function currentIndex() { return Math.max(0,snapshot?.profiles.findIndex(p => p.id === selectedId) ?? 0); }
-$('prev').addEventListener('click',() => selectIndex(currentIndex() - 1));
-$('next').addEventListener('click',() => selectIndex(currentIndex() + 1));
-$('cards').addEventListener('keydown',event => {
-  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    event.preventDefault();selectIndex(currentIndex() + (event.key === 'ArrowLeft' ? -1 : 1));
-  }
-});
-let scrollFrame;
-$('cards').addEventListener('scroll',() => {
-  if (scrollFrame || !snapshot?.profiles.length) return;
-  scrollFrame = requestAnimationFrame(() => {
-    scrollFrame = undefined;
-    const width = $('cards').children[0]?.getBoundingClientRect().width + 12;
-    updatePosition(Math.max(0,Math.min(snapshot.profiles.length - 1,Math.round($('cards').scrollLeft / width))));
-  });
-},{passive:true});
-// Native touch scrolling provides momentum and interruption; mouse dragging
-// follows the pointer directly and snaps on release. A swipe never signs in.
-let drag;
-$('cards').addEventListener('pointerdown',event => {
-  if (event.pointerType !== 'mouse' || event.button !== 0 || event.target.closest('button')) return;
-  drag = {id:event.pointerId,x:event.clientX,scroll:$('cards').scrollLeft,moved:false};
-});
-$('cards').addEventListener('pointermove',event => {
-  if (!drag || drag.id !== event.pointerId) return;
-  const dx = event.clientX - drag.x;
-  if (!drag.moved && Math.abs(dx) < 8) return;
-  drag.moved = true;
-  $('cards').setPointerCapture(event.pointerId);
-  $('cards').classList.add('dragging');
-  $('cards').scrollLeft = drag.scroll - dx;
-});
-function endDrag(event) {
-  if (!drag || drag.id !== event.pointerId) return;
-  const moved = drag.moved;
-  drag = undefined;
-  $('cards').classList.remove('dragging');
-  if ($('cards').hasPointerCapture(event.pointerId)) $('cards').releasePointerCapture(event.pointerId);
-  if (moved) selectIndex(currentIndex());
-}
-$('cards').addEventListener('pointerup',endDrag);
-$('cards').addEventListener('pointercancel',endDrag);
+
 async function load(refresh = false) {
   setLocked(true);
   try { render(await api('state',{refresh})); }
@@ -144,10 +95,12 @@ $('save').addEventListener('click',async () => {
   finally {setLocked(false);}
 });
 $('confirm').addEventListener('close',async () => {
-  if ($('confirm').returnValue !== 'switch' || !pendingId || locked) return;
+  const id = pendingId;
+  pendingId = undefined;
+  if ($('confirm').returnValue !== 'switch' || !id || locked) return;
   setLocked(true);
   try {
-    const result = await api('switch',{id:pendingId});
+    const result = await api('switch',{id});
     notice(result.message || 'Switching account. Antigravity will restart shortly…');
     if (result.same) setLocked(false); else startPolling();
   } catch (error) {notice(error.message,true);setLocked(false);}
@@ -170,8 +123,7 @@ function startPolling() {
 }
 document.addEventListener('visibilitychange',() => {
   if (document.hidden) {clearTimeout(pollTimer);pollTimer=undefined;}
-  else if (!locked) load();
-  else if (snapshot?.busy) startPolling();
+  else load();
 });
 load();
 

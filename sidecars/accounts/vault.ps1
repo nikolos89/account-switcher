@@ -207,7 +207,41 @@ function Set-Status([string]$State,[string]$Message) {
   Write-JsonAtomic (Join-Path $DataRoot 'switch-status.json') @{state=$State;message=$Message;updatedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();profileId=$ProfileId;workerPid=$PID;workerStartTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString();phase=$phase;errorType=$errorType;errorCode=$errorCode}
 }
 
-$lock=$null; $main=$null; $closed=$false; $launched=$false; $rollback=$null
+function New-DesktopStartInfo([string]$Executable) {
+  $start = [Diagnostics.ProcessStartInfo]::new($Executable)
+  $start.WorkingDirectory = [IO.Path]::GetDirectoryName($Executable)
+  $start.UseShellExecute = $false
+  # The sidecar runs on the same Antigravity executable in Node mode.
+  # Launch the desktop app in the user's environment, without sidecar flags.
+  foreach ($key in @($start.Environment.Keys)) {
+    if ($key -match '^(ELECTRON_|NODE_OPTIONS$|NODE_PATH$|ANTIGRAVITY_(LS_ADDRESS$|CSRF_TOKEN$|EXECUTABLE_DATA_DIR$|SIDECAR_))') {
+      $null = $start.Environment.Remove($key)
+    }
+  }
+  return $start
+}
+function Start-Desktop([string]$Executable) {
+  $process = [Diagnostics.Process]::Start((New-DesktopStartInfo $Executable))
+  if ($null -eq $process) { throw 'Could not launch Antigravity.' }
+  return $process
+}
+function Wait-DesktopWindow([Diagnostics.Process]$Process, [int]$TimeoutMilliseconds) {
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  while ($clock.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+    $Process.Refresh()
+    if ($Process.HasExited) { return $false }
+    if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
+      # A visible window must survive the first moments of startup.
+      if ($Process.WaitForExit(900)) { return $false }
+      $Process.Refresh()
+      if ($Process.MainWindowHandle -ne [IntPtr]::Zero) { return $true }
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+
+$lock=$null; $main=$null; $newMain=$null; $closed=$false; $rollback=$null; $credentialTouched=$false
 $phase='begin';$errorType=$null;$errorCode=$null
 try {
   switch ($Action) {
@@ -272,6 +306,7 @@ try {
       if (-not $main.CloseMainWindow()) { throw 'Antigravity did not accept the close request. Sign-in data was not changed.' }
       if (-not $main.WaitForExit(20000)) { throw 'Antigravity is waiting to close or save. Finish your work and try again. Sign-in data was not changed.' }
       $closed=$true
+      $phase='wait-shutdown'
       # Allow the native credential writer to finish; never race another root.
       $deadline=[DateTime]::UtcNow.AddSeconds(8)
       do {
@@ -279,18 +314,34 @@ try {
         if ($remaining.Count -eq 0) { break }
         Start-Sleep -Milliseconds 300
       } while ([DateTime]::UtcNow -lt $deadline)
-      if ($remaining.Count -gt 0) { throw 'Antigravity processes are still running. The account was not changed; the app will reopen.' }
+      if ($remaining.Count -gt 0) { throw 'Antigravity processes are still running. The account was not changed.' }
+      $phase='save-rollback'
       $rollback=[AccountPanelCredentials]::Read('gemini:antigravity')
       if ($null -eq $rollback) { throw 'The current sign-in disappeared during shutdown. Switching was cancelled.' }
       [IO.File]::WriteAllBytes((Join-Path $DataRoot 'last-rollback.bin'),(Protect-Entry $rollback))
       Set-Status 'restarting' 'Opening Antigravity with the selected account…'
+      $phase='write-profile'
+      $credentialTouched=$true
       [AccountPanelCredentials]::Write($saved.entry)
       $written=[AccountPanelCredentials]::Read('gemini:antigravity')
       if (-not [Linq.Enumerable]::SequenceEqual[byte]($written.Blob,$saved.entry.Blob)) { throw 'The saved sign-in could not be verified.' }
-      $newMain=Start-Process -FilePath $AppExe -WorkingDirectory ([IO.Path]::GetDirectoryName($AppExe)) -WindowStyle Normal -PassThru
-      try { if($newMain.WaitForExit(2000) -and $newMain.ExitCode -ne 0){throw 'The app did not start.'} } finally {$newMain.Dispose()}
-      $launched=$true
-      Set-Status 'done' ('Selected '+$saved.profile.email+'. Check the account in Antigravity settings.')
+      $phase='launch-desktop'
+      $newMain=Start-Desktop $AppExe
+      if (-not (Wait-DesktopWindow $newMain 22000)) {
+        if (-not $newMain.HasExited) { throw 'Antigravity is running, but no window appeared yet. Wait for it to open, then verify the profile.' }
+        $newMain.Dispose()
+        $newMain=$null
+        $phase='retry-desktop'
+        $newMain=Start-Desktop $AppExe
+        if (-not (Wait-DesktopWindow $newMain 12000)) {
+          throw 'Antigravity did not confirm that its window reopened.'
+        }
+      }
+      $phase='verify-profile'
+      $active=Get-Identity ([AccountPanelCredentials]::Read('gemini:antigravity'))
+      if ($active.email -cne $saved.profile.email) { throw 'Antigravity reopened, but the selected profile could not be verified. Check your account in settings.' }
+      $phase='complete'
+      Set-Status 'done' 'Antigravity reopened with the selected account.'
     }
     'SelfTest' {
       $testRoot=Join-Path $DataRoot ('synthetic-'+[guid]::NewGuid().ToString('N'))
@@ -349,15 +400,35 @@ try {
     'Opening Antigravity with the selected account…',
     'The saved sign-in could not be verified.',
     'The app did not start.',
+    'Could not launch Antigravity.',
+    'Antigravity processes are still running. The account was not changed.',
+    'Antigravity is running, but no window appeared yet. Wait for it to open, then verify the profile.',
+    'Antigravity did not confirm that its window reopened.',
+    'Antigravity reopened, but the selected profile could not be verified. Check your account in settings.',
+    'Antigravity reopened with the selected account.',
     'The Windows secure-storage operation failed. Sign-in secrets were not sent to the panel.'
   )
   if ($message -cnotin $safeMessages) {
     $message='The Windows secure-storage operation failed. Sign-in secrets were not sent to the panel.'
   }
   if ($Action -eq 'Switch') {
-    if ($closed -and -not $launched) {
-      if ($null -ne $rollback) { try {[AccountPanelCredentials]::Write($rollback)} catch {$message+=' Could not restore the previous sign-in.'} }
-      try {$reopened=Start-Process -FilePath $AppExe -WorkingDirectory ([IO.Path]::GetDirectoryName($AppExe)) -WindowStyle Normal -PassThru;$reopened.Dispose()} catch {$message+=' Open Antigravity manually.'}
+    if ($closed -and ($null -eq $newMain -or $newMain.HasExited)) {
+      # Never overwrite an identity that a live desktop process may be using.
+      $otherRoot=@(Get-CimInstance Win32_Process -Filter "Name='Antigravity.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -eq $AppExe -and $_.CommandLine -notmatch '(?:^|\s)--(?:type=|import\b)' })
+      if ($otherRoot.Count -eq 0) {
+        if ($credentialTouched -and $null -ne $rollback) {
+          try {[AccountPanelCredentials]::Write($rollback);$message+=' The previous sign-in was restored.'}
+          catch {$message+=' Could not restore the previous sign-in.'}
+        }
+        $reopened=$null
+        try {
+          $reopened=Start-Desktop $AppExe
+          if (-not (Wait-DesktopWindow $reopened 12000)) { $message+=' Check whether the app reopened.' }
+          else { $message+=' The app reopened.' }
+        } catch { $message+=' Open Antigravity manually.' }
+        finally { if ($null -ne $reopened) { $reopened.Dispose() } }
+      }
     }
     try {Set-Status 'failed' $message} catch {}
   }
@@ -366,4 +437,5 @@ try {
 } finally {
   if($null -ne $lock){$lock.Dispose()}
   if($null -ne $main){$main.Dispose()}
+  if($null -ne $newMain){$newMain.Dispose()}
 }

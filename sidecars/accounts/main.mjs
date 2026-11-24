@@ -41,7 +41,9 @@ async function vault(action, extra = []) {
   const runtime = resolveRuntime(dataRoot);
   return new Promise((resolve, reject) => {
     const childEnv = {...process.env};
-    for (const key of Object.keys(childEnv)) if (/ANTIGRAVITY.*(?:TOKEN|CSRF)/i.test(key)) delete childEnv[key];
+    for (const key of Object.keys(childEnv)) {
+      if (/^(?:ELECTRON_|NODE_OPTIONS$|NODE_PATH$)|^ANTIGRAVITY_.*(?:TOKEN|CSRF)/i.test(key)) delete childEnv[key];
+    }
     const child = execFile(runtime.pwsh, vaultArgs(runtime, action, extra), {
       windowsHide:true, encoding:'utf8', timeout:20000, maxBuffer:65536, env:childEnv
     }, (error, stdout) => {
@@ -100,6 +102,7 @@ app.api('/api/switch', async data => {
   busy = true;
   try {
     const plan = await vault('Plan',['-ProfileId',data.id]);
+    if (plan.same) return {same:true,message:'This account is already active.'};
     mkdirSync(dataRoot,{recursive:true});
     const temp = statusPath + '.' + randomUUID() + '.tmp';
     writeFileSync(temp,JSON.stringify({state:'queued',message:'Preparing to switch…',updatedAt:Date.now(),profileId:data.id}));
